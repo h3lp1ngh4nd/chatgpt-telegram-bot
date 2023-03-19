@@ -293,6 +293,7 @@ class ChatGPT3TelegramBot:
             trigger_keyword = self.config['group_trigger_keyword']
             if prompt.startswith(trigger_keyword):
                 prompt = prompt[len(trigger_keyword):].strip()
+                prompt = update.message.from_user.first_name+": " + prompt
             else:
                 logging.warning('Message does not start with trigger keyword, ignoring...')
                 return
