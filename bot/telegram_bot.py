@@ -97,6 +97,8 @@ class ChatGPT3TelegramBot:
 
         chat_id = update.effective_chat.id
         reset_content = update.message.text.replace('/reset', '').strip()
+        #add small update to still recognize individuals after reset
+        reset_content = reset_content + " if a sentence starts with a name and semicolon, pretend you are now talking to a different person"
         self.openai.reset_chat_history(chat_id=chat_id, content=reset_content)
         await context.bot.send_message(chat_id=chat_id, text='Done!')
 
