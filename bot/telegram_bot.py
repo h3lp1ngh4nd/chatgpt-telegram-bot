@@ -71,6 +71,9 @@ class ChatGPT3TelegramBot:
         transcribe_durations = self.usage[user_id].get_current_transcription_duration()
         cost_today, cost_month = self.usage[user_id].get_current_cost()
         
+        chat_id = update.effective_chat.id
+        chat_messages, chat_token_length = self.openai.get_conversation_stats(chat_id)
+
         usage_text = f"Today:\n"+\
                      f"{tokens_today} chat tokens used.\n"+\
                      f"{images_today} images generated.\n"+\
@@ -81,7 +84,11 @@ class ChatGPT3TelegramBot:
                      f"{tokens_month} chat tokens used.\n"+\
                      f"{images_month} images generated.\n"+\
                      f"{transcribe_durations[2]} minutes and {transcribe_durations[3]} seconds transcribed.\n"+\
-                     f"💰 For a total amount of ${cost_month:.2f}"
+                     f"💰 For a total amount of ${cost_month:.2f}"+\
+                     f"\n----------------------------\n\n"+\
+                     f"Current conversation:\n"+\
+                     f"{chat_messages} chat messages in history.\n"+\
+                     f"{chat_token_length} chat tokens in history.\n"
         await update.message.reply_text(usage_text)
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -299,8 +306,11 @@ class ChatGPT3TelegramBot:
                 prompt = prompt[len(trigger_keyword):].strip()
                 prompt = update.message.from_user.first_name+": " + prompt
             else:
-                logging.warning('Message does not start with trigger keyword, ignoring...')
-                return
+                if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
+                    logging.info('Message is a reply to the bot, allowing...')
+                else:
+                    logging.warning('Message does not start with trigger keyword, ignoring...')
+                    return
 
         await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
 
@@ -392,7 +402,7 @@ class ChatGPT3TelegramBot:
         """
         Handles errors in the telegram-python-bot library.
         """
-        logging.debug(f'Exception while handling an update: {context.error}')
+        logging.error(f'Exception while handling an update: {context.error}')
 
     def is_group_chat(self, update: Update) -> bool:
         """
