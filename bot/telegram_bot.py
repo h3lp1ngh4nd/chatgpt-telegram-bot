@@ -4,6 +4,9 @@ import asyncio
 import logging
 import os
 import io
+import re
+
+from pylatexenc.latex2text import LatexNodes2Text
 
 from uuid import uuid4
 from telegram import BotCommandScopeAllGroupChats, Update, constants
@@ -570,6 +573,7 @@ class ChatGPTTelegramBot:
                             continue
 
                     elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
+                        content = self.replace_math_expressions(content)
                         prev = content
 
                         try:
@@ -659,6 +663,8 @@ class ChatGPTTelegramBot:
         user_id = update.message.from_user.id
         prompt = message_text(update.message)
         self.last_message[chat_id] = prompt
+        if user_id not in self.usage:
+            self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
 
         if is_group_chat(update):
             trigger_keyword = self.config['group_trigger_keyword']
@@ -687,7 +693,15 @@ class ChatGPTTelegramBot:
                     message_thread_id=get_thread_id(update)
                 )
 
-                stream_response = self.openai.get_chat_response_stream(chat_id=chat_id, query=prompt)
+                stream_response = self.openai.get_chat_response_stream(
+                    chat_id=chat_id,
+                    query=prompt,
+                    params={
+                        'telegram_user_id': user_id,
+                        'telegram_user_name': update.message.from_user.name,
+                        'usage_tracker': self.usage[user_id]
+                    }
+                )
                 i = 0
                 prev = ''
                 sent_message = None
@@ -737,6 +751,7 @@ class ChatGPTTelegramBot:
                             continue
 
                     elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
+                        content = self.replace_math_expressions(content)
                         prev = content
 
                         try:
@@ -887,7 +902,15 @@ class ChatGPTTelegramBot:
 
                 unavailable_message = localized_text("function_unavailable_in_inline_mode", bot_language)
                 if self.config['stream']:
-                    stream_response = self.openai.get_chat_response_stream(chat_id=user_id, query=query)
+                    stream_response = self.openai.get_chat_response_stream(
+                        chat_id=user_id,
+                        query=query,
+                        params={
+                            'telegram_user_id': update.message.from_user.id,
+                            'telegram_user_name': update.message.from_user.name,
+                            'usage_tracker': self.usage[user_id]
+                        }
+                    )
                     i = 0
                     prev = ''
                     backoff = 0
@@ -1082,3 +1105,17 @@ class ChatGPTTelegramBot:
         application.add_error_handler(error_handler)
 
         application.run_polling()
+
+    def replace_math_expressions(self, content):
+        """
+        Convert latex to text
+        """
+        converter = LatexNodes2Text(math_mode='text')
+        text = converter.latex_to_text(content)
+        # bugfix for code
+        text = re.sub(r'“`', '```', text)
+        # Remove spaces at the beginning of the line before numbers
+        text = re.sub(r'^\s+(?=[\d(])', '\n', text, flags=re.MULTILINE)
+        # Replacing triple or more line breaks
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text

@@ -26,9 +26,9 @@ GPT_3_MODELS = ("gpt-3.5-turbo", "gpt-3.5-turbo-0301", "gpt-3.5-turbo-0613")
 GPT_3_16K_MODELS = ("gpt-3.5-turbo-16k", "gpt-3.5-turbo-16k-0613", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0125")
 GPT_4_MODELS = ("gpt-4", "gpt-4-0314", "gpt-4-0613", "gpt-4-turbo-preview")
 GPT_4_32K_MODELS = ("gpt-4-32k", "gpt-4-32k-0314", "gpt-4-32k-0613")
-GPT_4_VISION_MODELS = ("gpt-4-vision-preview",)
+GPT_4_VISION_MODELS = ("gpt-4-vision-preview", "gpt-4o")
 GPT_4_128K_MODELS = ("gpt-4-1106-preview","gpt-4-0125-preview","gpt-4-turbo-preview", "gpt-4-turbo", "gpt-4-turbo-2024-04-09")
-GPT_4O_MODELS = ("gpt-4o",)
+GPT_4O_MODELS = ("gpt-4o","gpt-4o-mini")
 GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS
 
 def default_max_tokens(model: str) -> int:
@@ -117,6 +117,10 @@ class OpenAIHelper:
         self.conversations: dict[int: list] = {}  # {chat_id: history}
         self.conversations_vision: dict[int: bool] = {}  # {chat_id: is_vision}
         self.last_updated: dict[int: datetime] = {}  # {chat_id: last_update_timestamp}
+        self.current_telegram_chat_id = 0
+        self.current_telegram_user_id = 0
+        self.current_telegram_user_name = ""
+        self.usage_tracker = {}
 
     def get_conversation_stats(self, chat_id: int) -> tuple[int, int]:
         """
@@ -171,13 +175,18 @@ class OpenAIHelper:
 
         return answer, response.usage.total_tokens
 
-    async def get_chat_response_stream(self, chat_id: int, query: str):
+    async def get_chat_response_stream(self, chat_id: int, query: str, params: dict):
         """
         Stream response from the GPT model.
         :param chat_id: The chat ID
         :param query: The query to send to the model
+        :param params: Additional parameters as a dictionary
         :return: The answer from the model and the number of tokens used, or 'not_finished'
         """
+        self.current_telegram_chat_id = chat_id
+        self.current_telegram_user_id = params.get('telegram_user_id', 0)
+        self.current_telegram_user_name = params.get('telegram_user_name', None)
+        self.usage_tracker = params.get('usage_tracker', {})
         plugins_used = ()
         response = await self.__common_get_chat_response(chat_id, query, stream=True)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
@@ -199,7 +208,7 @@ class OpenAIHelper:
         tokens_used = str(self.__count_tokens(self.conversations[chat_id]))
 
         show_plugins_used = len(plugins_used) > 0 and self.config['show_plugins_used']
-        plugin_names = tuple(self.plugin_manager.get_plugin_source_name(plugin) for plugin in plugins_used)
+        plugin_names = tuple(set(self.plugin_manager.get_plugin_source_name(plugin) for plugin in plugins_used))
         if self.config['show_usage']:
             answer += f"\n\n---\n💰 {tokens_used} {localized_text('stats_tokens', self.config['bot_language'])}"
             if show_plugins_used:
@@ -652,8 +661,8 @@ class OpenAIHelper:
         model = self.config['model']
         try:
             encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            encoding = tiktoken.get_encoding("gpt-3.5-turbo")
+        except KeyError: # было gpt-3.5-turbo фикс на cl100k_base или p50k_base https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb
+            encoding = tiktoken.get_encoding("cl100k_base")
 
         if model in GPT_3_MODELS + GPT_3_16K_MODELS:
             tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
@@ -738,3 +747,14 @@ class OpenAIHelper:
     #     billing_data = json.loads(response.text)
     #     usage_month = billing_data["total_usage"] / 100  # convert cent amount to dollars
     #     return usage_month
+
+    def get_current_telegram_chat_user_info(self) -> int:
+        """
+        Get current telegram chat and user info
+        """
+        return {
+            "chat_id": self.current_telegram_chat_id,
+            "user_id": self.current_telegram_user_id,
+            "user_name": self.current_telegram_user_name,
+            "usage_tracker": self.usage_tracker
+        }
